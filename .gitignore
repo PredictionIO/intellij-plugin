@@ -1,0 +1,5 @@
+# IntelliJ target directory
+/out
+
+# IntelliJ files
+/.idea

@@ -1,5 +1,11 @@
 package io.prediction;
 
+import com.intellij.execution.RunManager;
+import com.intellij.execution.RunnerAndConfigurationSettings;
+import com.intellij.execution.application.ApplicationConfiguration;
+import com.intellij.execution.application.ApplicationConfigurationType;
+import com.intellij.execution.configurations.ConfigurationFactory;
+import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.facet.Facet;
 import com.intellij.facet.ui.FacetEditorTab;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
@@ -17,6 +23,9 @@ import javax.swing.*;
 import java.io.File;
 import java.io.FilenameFilter;
 import java.net.MalformedURLException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class PIOSettingsEditorTab extends FacetEditorTab {
     private PioSettingsControl panel;
@@ -99,7 +108,7 @@ public class PIOSettingsEditorTab extends FacetEditorTab {
         if (pioState != null) {
             Module module = facet.getModule();
             addLibraries(pioState, module);
-            addRunConfigurations(module);
+            addRunConfigurations(pioState, module);
         }
     }
 
@@ -119,15 +128,11 @@ public class PIOSettingsEditorTab extends FacetEditorTab {
         if (jar != null && libraryTable.getLibraryByName(libName) == null) {
             Library library = libraryTable.createLibrary(libName);
             Library.ModifiableModel libraryModel = library.getModifiableModel();
-            try {
-                libraryModel.addRoot(jar.toURI().toURL().toString(), OrderRootType.CLASSES);
-                libraryModel.commit();
-                LibraryOrderEntry entry = model.findLibraryOrderEntry(library);
-                assert entry != null;
-                entry.setScope(DependencyScope.RUNTIME);
-            } catch (MalformedURLException e) {
-                // Shouldn't happen.
-            }
+            libraryModel.addRoot("file://" + jar.getAbsolutePath(), OrderRootType.CLASSES);
+            libraryModel.commit();
+            LibraryOrderEntry entry = model.findLibraryOrderEntry(library);
+            assert entry != null;
+            entry.setScope(DependencyScope.RUNTIME);
         }
     }
 
@@ -161,7 +166,57 @@ public class PIOSettingsEditorTab extends FacetEditorTab {
         }
     }
 
-    private void addRunConfigurations(Module module) {
-        // todo
+    private void addRunConfigurations(PIOFacetConfiguration.State pioState, Module module) {
+        addRunConfiguration(module, pioState, "pio train",
+                "--engine-id dummy --engine-version dummy --engine-variant engine.json",
+                "io.prediction.workflow.CreateWorkflow");
+        addRunConfiguration(module, pioState, "pio deploy", "--engineInstanceId dummy",
+                "io.prediction.workflow.CreateServer");
+    }
+
+    private void addRunConfiguration(Module module, PIOFacetConfiguration.State pioState, String confName,
+                                     String programArgs, String mainClass) {
+        RunManager runManager = RunManager.getInstance(module.getProject());
+        List<RunConfiguration> existing = runManager.getAllConfigurationsList();
+        for (RunConfiguration configuration : existing) {
+            if (confName.equals(configuration.getName())) return;
+        }
+
+        ConfigurationFactory factory = ApplicationConfigurationType.getInstance().getConfigurationFactories()[0];
+        RunnerAndConfigurationSettings configurationSettings = runManager.createRunConfiguration(confName, factory);
+        ApplicationConfiguration configuration = (ApplicationConfiguration) configurationSettings.getConfiguration();
+        configuration.setMainClassName(mainClass);
+        String vmParameters = String.format("-Dspark.master=local -Dlog4j.configuration=file:%s",
+                join(pioState.pioHome, "conf/log4j.properties"));
+        configuration.setVMParameters(vmParameters);
+        configuration.setProgramParameters(programArgs);
+        configuration.setModule(module);
+
+        Map<String, String> env = new HashMap<>();
+        String pioStore = join(pioState.pioHome, ".pio_store");
+        env.put("SPARK_HOME", pioState.sparkHome);
+        env.put("PIO_FS_BASEDIR", pioStore);
+        env.put("PIO_FS_ENGINESDIR", pioStore + "/engines");
+        env.put("PIO_FS_TMPDIR", pioStore + "/tmp");
+        env.put("PIO_STORAGE_SOURCES_LOCALFS_HOSTS", pioStore + "/models");
+        env.put("PIO_STORAGE_REPOSITORIES_METADATA_NAME", "predictionio_metadata");
+        env.put("PIO_STORAGE_REPOSITORIES_METADATA_SOURCE", "ELASTICSEARCH");
+        env.put("PIO_STORAGE_REPOSITORIES_MODELDATA_NAME", "pio");
+        env.put("PIO_STORAGE_REPOSITORIES_MODELDATA_SOURCE", "LOCALFS");
+        env.put("PIO_STORAGE_REPOSITORIES_APPDATA_NAME", "predictionio_appdata");
+        env.put("PIO_STORAGE_REPOSITORIES_APPDATA_SOURCE", "ELASTICSEARCH");
+        env.put("PIO_STORAGE_REPOSITORIES_EVENTDATA_NAME", "predictionio_eventdata");
+        env.put("PIO_STORAGE_REPOSITORIES_EVENTDATA_SOURCE", "HBASE");
+        env.put("PIO_STORAGE_SOURCES_ELASTICSEARCH_TYPE", "elasticsearch");
+        env.put("PIO_STORAGE_SOURCES_ELASTICSEARCH_HOSTS", "localhost");
+        env.put("PIO_STORAGE_SOURCES_ELASTICSEARCH_PORTS", "9300");
+        env.put("PIO_STORAGE_SOURCES_LOCALFS_TYPE", "localfs");
+        env.put("PIO_STORAGE_SOURCES_LOCALFS_PORTS", "0");
+        env.put("PIO_STORAGE_SOURCES_HBASE_TYPE", "hbase");
+        env.put("PIO_STORAGE_SOURCES_HBASE_HOSTS", "0");
+        env.put("PIO_STORAGE_SOURCES_HBASE_PORTS", "0");
+        configuration.setEnvs(env);
+
+        runManager.addConfiguration(configurationSettings, false);
     }
 }

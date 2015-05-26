@@ -14,6 +14,7 @@ import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.roots.*;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.roots.libraries.LibraryTable;
+import com.intellij.openapi.roots.libraries.LibraryTablesRegistrar;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
@@ -22,7 +23,6 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.*;
 import java.io.File;
 import java.io.FilenameFilter;
-import java.net.MalformedURLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -115,23 +115,22 @@ public class PIOSettingsEditorTab extends FacetEditorTab {
     private void addLibraries(PIOFacetConfiguration.State pioState, Module module) {
         ModuleRootManager rootManager = ModuleRootManager.getInstance(module);
         ModifiableRootModel model = rootManager.getModifiableModel();
-        LibraryTable libraryTable = model.getModuleLibraryTable();
-        ensureLibraryCreated(libraryTable, model, pioState.pioHome, new PrefixFilter("pio-assembly"), "pio-pio");
-        ensureLibraryCreated(libraryTable, model, pioState.sparkHome, new PrefixFilter("spark-assembly"), "pio-spark");
+        ensureLibraryCreated(model, pioState.pioHome, new PrefixFilter("pio-assembly"), "pio-pio");
+        ensureLibraryCreated(model, pioState.sparkHome, new PrefixFilter("spark-assembly"), "pio-spark");
 
         model.commit();
     }
 
-    private void ensureLibraryCreated(LibraryTable libraryTable, ModifiableRootModel model, String home, FilenameFilter filter, String libName) {
+    private void ensureLibraryCreated(ModifiableRootModel model, String home, FilenameFilter filter, String libName) {
         File jar = assembledJar(join(home, "assembly"), filter);
         if (jar == null) jar = assembledJar(join(home, "lib"), filter);
+        LibraryTable libraryTable = LibraryTablesRegistrar.getInstance().getLibraryTable(model.getProject());
         if (jar != null && libraryTable.getLibraryByName(libName) == null) {
             Library library = libraryTable.createLibrary(libName);
             Library.ModifiableModel libraryModel = library.getModifiableModel();
             libraryModel.addRoot("file://" + jar.getAbsolutePath(), OrderRootType.CLASSES);
             libraryModel.commit();
-            LibraryOrderEntry entry = model.findLibraryOrderEntry(library);
-            assert entry != null;
+            LibraryOrderEntry entry = model.addLibraryEntry(library);
             entry.setScope(DependencyScope.RUNTIME);
         }
     }
@@ -170,7 +169,8 @@ public class PIOSettingsEditorTab extends FacetEditorTab {
         addRunConfiguration(module, pioState, "pio train",
                 "--engine-id dummy --engine-version dummy --engine-variant engine.json",
                 "io.prediction.workflow.CreateWorkflow");
-        addRunConfiguration(module, pioState, "pio deploy", "--engineInstanceId dummy",
+        addRunConfiguration(module, pioState, "pio deploy",
+                "--engineId dummy --engineVersion dummy --engineInstanceId dummy",
                 "io.prediction.workflow.CreateServer");
     }
 

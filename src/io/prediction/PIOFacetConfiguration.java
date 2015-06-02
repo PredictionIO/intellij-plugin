@@ -13,7 +13,7 @@ import org.jetbrains.annotations.Nullable;
 public class PIOFacetConfiguration implements FacetConfiguration, PersistentStateComponent<PIOFacetConfiguration.State> {
     @Override
     public FacetEditorTab[] createEditorTabs(FacetEditorContext editorContext, FacetValidatorsManager validatorsManager) {
-        return new FacetEditorTab[] {new PIOSettingsEditorTab(this)};
+        return new FacetEditorTab[] {new PIOSettingsEditorTab(this, editorContext)};
     }
 
     @Override

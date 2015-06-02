@@ -7,15 +7,18 @@ import com.intellij.execution.application.ApplicationConfigurationType;
 import com.intellij.execution.configurations.ConfigurationFactory;
 import com.intellij.execution.configurations.RunConfiguration;
 import com.intellij.facet.Facet;
+import com.intellij.facet.ui.FacetEditorContext;
 import com.intellij.facet.ui.FacetEditorTab;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.options.ConfigurationException;
-import com.intellij.openapi.roots.*;
+import com.intellij.openapi.roots.DependencyScope;
+import com.intellij.openapi.roots.ModuleRootModificationUtil;
+import com.intellij.openapi.roots.OrderRootType;
 import com.intellij.openapi.roots.libraries.Library;
-import com.intellij.openapi.roots.libraries.LibraryTable;
-import com.intellij.openapi.roots.libraries.LibraryTablesRegistrar;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
+import com.intellij.openapi.vfs.LocalFileSystem;
+import com.intellij.openapi.vfs.VirtualFile;
 import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -28,23 +31,25 @@ import java.util.List;
 import java.util.Map;
 
 public class PIOSettingsEditorTab extends FacetEditorTab {
-    private PioSettingsControl panel;
+    private PIOSettingsControl panel;
     private PIOFacetConfiguration pioFacetConfiguration;
+    private FacetEditorContext editorContext;
 
-    public static class PioSettingsControl {
+    public static class PIOSettingsControl {
         private TextFieldWithBrowseButton pioHomeChooser;
         private TextFieldWithBrowseButton sparkHomeChooser;
         private JPanel root;
 
-        public PioSettingsControl() {
+        public PIOSettingsControl() {
             FileChooserDescriptor descriptor = new FileChooserDescriptor(false, true, false, false, false, false);
             pioHomeChooser.addBrowseFolderListener("PIO home", "Select PIO home", null, descriptor);
             sparkHomeChooser.addBrowseFolderListener("Spark home", "Select Spark home", null, descriptor);
         }
     }
 
-    public PIOSettingsEditorTab(PIOFacetConfiguration facetConfiguration) {
+    public PIOSettingsEditorTab(PIOFacetConfiguration facetConfiguration, FacetEditorContext editorContext) {
         pioFacetConfiguration = facetConfiguration;
+        this.editorContext = editorContext;
     }
 
     @Nls
@@ -62,7 +67,7 @@ public class PIOSettingsEditorTab extends FacetEditorTab {
     @NotNull
     @Override
     public JComponent createComponent() {
-        panel = new PioSettingsControl();
+        panel = new PIOSettingsControl();
         return panel.root;
     }
 
@@ -113,25 +118,21 @@ public class PIOSettingsEditorTab extends FacetEditorTab {
     }
 
     private void addLibraries(PIOFacetConfiguration.State pioState, Module module) {
-        ModuleRootManager rootManager = ModuleRootManager.getInstance(module);
-        ModifiableRootModel model = rootManager.getModifiableModel();
-        ensureLibraryCreated(model, pioState.pioHome, new PrefixFilter("pio-assembly"), "pio-pio");
-        ensureLibraryCreated(model, pioState.sparkHome, new PrefixFilter("spark-assembly"), "pio-spark");
-
-        model.commit();
+        ensureLibraryCreated(pioState.pioHome, new PrefixFilter("pio-assembly"), "pio-pio", module);
+        ensureLibraryCreated(pioState.sparkHome, new PrefixFilter("spark-assembly"), "pio-spark", module);
     }
 
-    private void ensureLibraryCreated(ModifiableRootModel model, String home, FilenameFilter filter, String libName) {
+    private void ensureLibraryCreated(String home, FilenameFilter filter, String libName, Module module) {
         File jar = assembledJar(join(home, "assembly"), filter);
         if (jar == null) jar = assembledJar(join(home, "lib"), filter);
-        LibraryTable libraryTable = LibraryTablesRegistrar.getInstance().getLibraryTable(model.getProject());
-        if (jar != null && libraryTable.getLibraryByName(libName) == null) {
-            Library library = libraryTable.createLibrary(libName);
+        if (jar != null && editorContext.findLibrary(libName) == null) {
+            VirtualFile vFile = LocalFileSystem.getInstance().findFileByIoFile(jar);
+            Library library = editorContext.createProjectLibrary(libName, new VirtualFile[]{vFile},
+                    VirtualFile.EMPTY_ARRAY);
             Library.ModifiableModel libraryModel = library.getModifiableModel();
             libraryModel.addRoot("file://" + jar.getAbsolutePath(), OrderRootType.CLASSES);
             libraryModel.commit();
-            LibraryOrderEntry entry = model.addLibraryEntry(library);
-            entry.setScope(DependencyScope.RUNTIME);
+            ModuleRootModificationUtil.addDependency(module, library, DependencyScope.RUNTIME, false);
         }
     }
 

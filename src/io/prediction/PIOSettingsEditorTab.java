@@ -10,11 +10,11 @@ import com.intellij.facet.Facet;
 import com.intellij.facet.ui.FacetEditorContext;
 import com.intellij.facet.ui.FacetEditorTab;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
+import com.intellij.openapi.module.JavaModuleType;
 import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.options.ConfigurationException;
-import com.intellij.openapi.roots.DependencyScope;
-import com.intellij.openapi.roots.ModuleRootModificationUtil;
-import com.intellij.openapi.roots.OrderRootType;
+import com.intellij.openapi.roots.*;
 import com.intellij.openapi.roots.libraries.Library;
 import com.intellij.openapi.ui.TextFieldWithBrowseButton;
 import com.intellij.openapi.vfs.LocalFileSystem;
@@ -111,29 +111,43 @@ public class PIOSettingsEditorTab extends FacetEditorTab {
     public void onFacetInitialized(@NotNull Facet facet) {
         PIOFacetConfiguration.State pioState = pioFacetConfiguration.getState();
         if (pioState != null) {
-            Module module = facet.getModule();
-            addLibraries(pioState, module);
-            addRunConfigurations(pioState, module);
+            Module sbtModule = facet.getModule();
+            Module runnerModule = addModule(pioState, sbtModule);
+            addRunConfigurations(pioState, runnerModule);
         }
     }
 
-    private void addLibraries(PIOFacetConfiguration.State pioState, Module module) {
-        ensureLibraryCreated(pioState.pioHome, new PrefixFilter("pio-assembly"), "pio-pio", module);
-        ensureLibraryCreated(pioState.sparkHome, new PrefixFilter("spark-assembly"), "pio-spark", module);
+    private Module addModule(PIOFacetConfiguration.State pioState, Module sbtModule) {
+        ModuleManager moduleManager = ModuleManager.getInstance(sbtModule.getProject());
+        String moduleName = "pio-runner-" + sbtModule.getName();
+        Module runnerModule = moduleManager.findModuleByName(moduleName);
+        if (runnerModule == null) {
+            VirtualFile moduleFile = sbtModule.getModuleFile();
+            assert moduleFile != null;
+            String imlPath = moduleFile.getParent().getPath() + "/" + moduleName + ".iml";
+            runnerModule = moduleManager.newModule(imlPath, JavaModuleType.getModuleType().getId());
+            ModifiableRootModel model = ModuleRootManager.getInstance(runnerModule).getModifiableModel();
+            model.addModuleOrderEntry(sbtModule);
+            model.setSdk(ModuleRootManager.getInstance(sbtModule).getSdk());
+            model.commit();
+            ensureLibraryCreated(pioState.pioHome, new PrefixFilter("pio-assembly"), "pio-pio", runnerModule);
+            ensureLibraryCreated(pioState.sparkHome, new PrefixFilter("spark-assembly"), "pio-spark", runnerModule);
+        }
+        return runnerModule;
     }
 
     private void ensureLibraryCreated(String home, FilenameFilter filter, String libName, Module module) {
         File jar = assembledJar(join(home, "assembly"), filter);
         if (jar == null) jar = assembledJar(join(home, "lib"), filter);
-        if (jar != null && editorContext.findLibrary(libName) == null) {
+        Library library = editorContext.findLibrary(libName);
+        if (jar != null && library == null) {
             VirtualFile vFile = LocalFileSystem.getInstance().findFileByIoFile(jar);
-            Library library = editorContext.createProjectLibrary(libName, new VirtualFile[]{vFile},
-                    VirtualFile.EMPTY_ARRAY);
+            library = editorContext.createProjectLibrary(libName, new VirtualFile[]{vFile}, VirtualFile.EMPTY_ARRAY);
             Library.ModifiableModel libraryModel = library.getModifiableModel();
             libraryModel.addRoot("file://" + jar.getAbsolutePath(), OrderRootType.CLASSES);
             libraryModel.commit();
-            ModuleRootModificationUtil.addDependency(module, library, DependencyScope.RUNTIME, false);
         }
+        ModuleRootModificationUtil.addDependency(module, library, DependencyScope.RUNTIME, false);
     }
 
     private File assembledJar(String dir, FilenameFilter filter) {
